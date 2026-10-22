@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="WingetTui.App/WingetTui.App.csproj" />
+  <Project Path="WingetTui.Core/WingetTui.Core.csproj" />
+</Solution>
