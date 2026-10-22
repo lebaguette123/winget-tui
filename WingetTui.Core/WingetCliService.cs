@@ -128,6 +128,40 @@ public partial class WingetCliService : IPackageService
             $"Failed to upgrade {package.Id}: {message}");
     }
 
+    public IReadOnlyList<PackageInfo> GetAvailableUpdates()
+    {
+        var result = RunWinget(
+            "list",
+            "--upgrade-available",
+            "--disable-interactivity",
+            "--accept-source-agreements");
+
+        const int noPackagesFound = unchecked((int)0x8A150014);
+
+        const string noPackagesMessage 
+            = "No installed package found matching input criteria.";
+
+        if (result.ExitCode == noPackagesFound ||
+            result.Output.Contains(noPackagesMessage, StringComparison.OrdinalIgnoreCase) ||
+            result.Error.Contains(noPackagesMessage, StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        if (result.ExitCode != 0)
+        {
+            var message = !string.IsNullOrWhiteSpace(result.Error)
+                ? result.Error.Trim()
+                : !string.IsNullOrWhiteSpace(result.Output)
+                    ? result.Output.Trim()
+                    : $"winget exited with code 0x{result.ExitCode:X8}.";
+
+            throw new InvalidOperationException(message);
+        }
+
+        return ParseAvailableUpdates(result.Output);
+    }
+
     private static WingetResult RunWinget(params string[] args)
     {
         var psi = new ProcessStartInfo("winget")
@@ -230,7 +264,7 @@ public partial class WingetCliService : IPackageService
             if (matchCol >= 0 && cells.Count == headers.Length - 1)
                 cells.Insert(matchCol, "");
 
-            if (cells.Count != headers.Length) continue; // footer/notice lines
+            if (cells.Count != headers.Length) continue;
 
             result.Add(new PackageInfo(
                 Id: cells[idCol],
@@ -241,6 +275,72 @@ public partial class WingetCliService : IPackageService
         }
         return result;
         int Col(string name) => Array.FindIndex(headers, h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+    
+    private static IReadOnlyList<PackageInfo> ParseAvailableUpdates(string output)
+    {
+        var lines = output
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .ToArray();
+
+        var separatorIndex = Array.FindIndex(
+            lines,
+            line => line.Length > 10 && line.All(c => c == '-'));
+
+        if (separatorIndex < 1)
+        {
+            throw new FormatException(
+                "Could not parse winget update output: table separator not found.");
+        }
+
+        var header = lines[separatorIndex - 1];
+
+        var columns = Regex.Matches(header, @"\S+")
+            .Cast<Match>()
+            .ToArray();
+
+        string[] expectedHeaders =
+            ["Name", "Id", "Version", "Available", "Source"];
+
+        if (columns.Length != expectedHeaders.Length ||
+            !columns.Select(column => column.Value)
+                .SequenceEqual(
+                    expectedHeaders,
+                    StringComparer.OrdinalIgnoreCase))
+        {
+            throw new FormatException(
+                $"Unexpected winget update table header: {header}");
+        }
+
+        string Cell(string line, int columnIndex)
+        {
+            var start = columns[columnIndex].Index;
+
+            if (start >= line.Length)
+                return "";
+
+            var end = columnIndex + 1 < columns.Length
+                ? Math.Min(columns[columnIndex + 1].Index, line.Length)
+                : line.Length;
+
+            return line[start..end].Trim();
+        }
+
+        return
+        [
+            .. from line in lines.Skip(separatorIndex + 1)
+            where !string.IsNullOrWhiteSpace(line)
+            let name = Cell(line, 0)
+            let id = Cell(line, 1)
+            let version = Cell(line, 2)
+            let availableVersion = Cell(line, 3)
+            let source = Cell(line, 4)
+            where !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id) &&
+                  !string.IsNullOrWhiteSpace(availableVersion)
+            select new PackageInfo(Id: id, Name: name, Version: version, AvailableVersion: availableVersion,
+                Source: source)
+        ];
     }
 
     [GeneratedRegex(@"\s{2,}")]

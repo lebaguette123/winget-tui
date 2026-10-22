@@ -7,4 +7,5 @@ public interface IPackageService
     void Install(PackageInfo package, bool acceptPackageAgreements);
     
     void Upgrade(PackageInfo package, bool acceptPackageAgreements);
+    IReadOnlyList<PackageInfo> GetAvailableUpdates();
 }

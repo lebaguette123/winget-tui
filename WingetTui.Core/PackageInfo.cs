@@ -7,4 +7,5 @@ public record PackageInfo(
     string Publisher = "", 
     string Description = "",
     string Match = "",
-    string Source = "");
+    string Source = "",
+    string AvailableVersion = "");
